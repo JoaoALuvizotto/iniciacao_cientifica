@@ -105,31 +105,86 @@ class LattesParser:
     def extract_articles(self):
         try:
             articles_tags = self.soup.find_all('div', class_='artigo-completo')
-
-            if not articles_tags:
-                raise ValueError("Rótulo 'informacao artigo' não encontrado.")
+            #print(articles_tags)
             
+            if not articles_tags:
+                raise ValueError("Rótulo 'artigo completo' não encontrado.")
+
+            lista_artigos = []
             for artigo in articles_tags:
                 artigo_tag = artigo.find('div', class_='layout-cell-11')
-                doi_tag = artigo_tag.find('div', class_='icone-doi')
-                link_doi = doi_tag['href']
-                titulo_artigo = artigo_tag.get_text(strip = True)
-                print(link_doi)
-                print(titulo_artigo)
+                doi_tag = artigo_tag.find('a', class_='icone-doi')
+                if doi_tag:
+                    link_doi = doi_tag['href']
+                else:
+                    link_doi = None
+                
+                # Limpando o texto do artigo
+                texto_completo = artigo_tag.get_text(strip = True)
+                texto_completo = re.sub(r'\s+', ' ', texto_completo)
+                texto_completo = texto_completo.strip()
+                
+                #lista de dicionarios para armazenar no dicionario principal
+                dados_artigo = {
+                    'doi': link_doi,
+                    'texto_completo': texto_completo
+                }
+                lista_artigos.append(dados_artigo)
+                self.data['artigos'] = lista_artigos
                 
         except Exception as e:
             print(f"Erro ao extrair artigos publicados: {e}")
             self.data['artigos'] = None
         
+    def extract_generic_productions(self, name_section):
+        #print('aaaaa',name_section)
+        encontrado = self.soup.find('a', attrs={'name': name_section})
+        #print(encontrado)
+        producao_tag = encontrado.find_parent('b')
+        producao_pai = producao_tag.find_parent('div', class_='cita-artigos')
+        #print(producao_pai)
+        sibling = producao_pai.find_next_sibling('div')
+        #print(sibling)
+        textos_producoes = []
+        while sibling:
+            classes_producoes = []
+            classes_producoes = sibling.get('class', [])
+            
+            if 'cita-artigos' in classes_producoes or 'inst_back' in classes_producoes:
+                break
+            
+            if 'layout-cell-11' in classes_producoes: 
+                texto_producao = sibling.get_text(strip = True)
+                texto_limpo = re.sub(r'\s+', ' ', texto_producao)
+                textos_producoes.append(texto_limpo)
+            
+            sibling = sibling.find_next_sibling('div')
+        
+        
+        
+        return textos_producoes
+    
+    
+    def extract_productions(self):
+        # producoes_tag = self.soup.find('a', attrs={'name': 'ProducaoBibliografica'})
+        # print(producoes_tag)
+        revistas = self.extract_generic_productions('TextosJornaisRevistas') 
+        self.data['producao_revistas'] = revistas
+        
+        congresso = self.extract_generic_productions('TrabalhosPublicadosAnaisCongresso') 
+        self.data['producao_revistas'] = congresso
+                
+        
     # Método principal que orquestra todas as extrações.
     def parse(self):
        
         print("Iniciando análise do Lattes...")
-        self.extract_name()
-        self.extract_lattes_id()
-        self.extract_address()
-        self.extract_activity()
-        self.extract_articles()
+        # self.extract_name()
+        # self.extract_lattes_id()
+        # self.extract_address()
+        # self.extract_activity()
+        # self.extract_articles()
+        self.extract_productions()
         
         print("Análise concluída.")
         return self.data
