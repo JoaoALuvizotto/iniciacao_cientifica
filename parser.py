@@ -136,15 +136,21 @@ class LattesParser:
             print(f"Erro ao extrair artigos publicados: {e}")
             self.data['artigos'] = None
         
-    def extract_generic_productions(self, name_section):
-        #print('aaaaa',name_section)
-        encontrado = self.soup.find('a', attrs={'name': name_section})
-        #print(encontrado)
-        producao_tag = encontrado.find_parent('b')
-        producao_pai = producao_tag.find_parent('div', class_='cita-artigos')
-        #print(producao_pai)
-        sibling = producao_pai.find_next_sibling('div')
-        #print(sibling)
+    def extract_generic_productions(self, target):
+        # Quando passa a tag name no argumento target
+        if isinstance(target, str):
+            encontrado = self.soup.find('a', attrs={'name': target})
+            if not encontrado:
+                print(f"Aviso: Seção '{target}' não encontrada.")
+                return []
+            
+            producao_tag = encontrado.find_parent('b')
+            producao_pai = producao_tag.find_parent('div', class_='cita-artigos')
+            sibling = producao_pai.find_next_sibling('div')
+        #Quando a div é passada como argumento 
+        else:
+            sibling = target.find_next_sibling('div')
+            
         textos_producoes = []
         while sibling:
             classes_producoes = []
@@ -166,13 +172,32 @@ class LattesParser:
     
     
     def extract_productions(self):
-        # producoes_tag = self.soup.find('a', attrs={'name': 'ProducaoBibliografica'})
-        # print(producoes_tag)
+        
         revistas = self.extract_generic_productions('TextosJornaisRevistas') 
         self.data['producao_revistas'] = revistas
         
-        congresso = self.extract_generic_productions('TrabalhosPublicadosAnaisCongresso') 
-        self.data['producao_revistas'] = congresso
+        todas_ancoras = self.soup.find_all('a', attrs={'name':'TrabalhosPublicadosAnaisCongresso'})
+        
+        for ancora in todas_ancoras:
+            tag_b = ancora.find_parent('b')
+            if not tag_b:
+                continue
+            
+            titulo = tag_b.get_text(strip=True)
+            titulo_pai = tag_b.find_parent('div', class_='cita-artigos')
+            
+            if "Trabalhos completos" in titulo:
+                self.data['trabalhos_completos'] = self.extract_generic_productions(titulo_pai)
+            
+            elif "Resumos expandidos" in titulo:
+                self.data['resumos_expandidos'] = self.extract_generic_productions(titulo_pai)
+            
+            elif "Resumos publicados" in titulo: 
+                self.data['resumos_publicados'] = self.extract_generic_productions(titulo_pai)
+                
+            orientacoes =  self.extract_generic_productions('Orientacaoemandamento')
+            self.data['orientacoes'] = orientacoes
+        
                 
         
     # Método principal que orquestra todas as extrações.
