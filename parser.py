@@ -195,21 +195,113 @@ class LattesParser:
             elif "Resumos publicados" in titulo: 
                 self.data['resumos_publicados'] = self.extract_generic_productions(titulo_pai)
                 
-            orientacoes =  self.extract_generic_productions('Orientacaoemandamento')
-            self.data['orientacoes'] = orientacoes
-        
+    def extract_orientations(self):
+        try:
+            # Lista com o "Nome da Tag no HTML" e a "Chave" onde você quer salvar
+            tipos = [
+                ('Orientacoesconcluidas', 'orientacoes_concluidas'),
+                ('Orientacaoemandamento', 'orientacoes_em_andamento')
+            ]
+            
+            for tag_html, chave_dic in tipos:
+                lista_orientacoes = []
                 
+                # 1. Busca a âncora
+                orientation_tag = self.soup.find('a', attrs={'name': tag_html})
+                
+                if orientation_tag:
+                    data_cell = orientation_tag.find_next('div', class_='data-cell')
+                    
+                    if data_cell:
+                        orientations = data_cell.find_all('div', class_='layout-cell-pad-5')
+                        
+                        for orientation in orientations:
+                            texto = orientation.get_text(strip=True)
+                            texto = re.sub(r'\s+', ' ', texto)
+                            
+                            # Padrão: Nome. Título. Ano. Resto
+                            match = re.search(r'^([^.]+)\.\s+(.+?)\.\s+(\d{4})\.\s*(.*)', texto)
+                            
+                            if match:
+                                dados = {
+                                    'aluno': match.group(1).strip(),
+                                    'titulo': match.group(2).strip(),
+                                    'ano': match.group(3).strip(),
+                                    'instituicao': match.group(4).strip()
+                                }
+                            else:
+                                dados = {
+                                    'aluno': texto, 
+                                    'titulo': '', 
+                                    'ano': '', 
+                                    'instituicao': ''
+                                }
+                                
+                            lista_orientacoes.append(dados)
+                
+
+                self.data[chave_dic] = lista_orientacoes
+
+        except Exception as e:
+            print(f"Erro ao extrair as orientações: {e}")
+            self.data['orientacoes_concluidas'] = []
+            self.data['orientacoes_em_andamento'] = []
+            
+    
+    #Ajustar para pegar somente o titulo do projeto e o período
+    def extract_projects(self):
+        try:
+            projects_list = []
+            projects_tag = self.soup.find('a', attrs={'name':'ProjetosPesquisa'})
+            if projects_tag:
+                projects = projects_tag.find_next('div', class_='data-cell')
+                for project in projects:
+                    project_text = project.get_text(strip=True)
+                    project_text = re.sub(r'\s+', ' ', project_text)
+                    match = re.search(r'^(\d{4}\s*-\s*(?:Atual|\d{4}))\.?\s*(.*)', project_text)
+                    period = match.group(1)
+                    text = match.group(2)
+                    
+                    if "Descrição:" in text:
+                        parts = text.split("Descrição:")
+                        title = parts[0].strip(" .")
+                        description = parts[1].strip()
+                    else:
+                        title = title
+                        description = "" 
+                        
+                    projects_list.append({
+                            'periodo': period,
+                            'titulo': title,
+                            'descricao': description
+                        })
+                    
+                    self.data['projetos'] = projects_list
+            else:
+                print("Projetos de pesquisa não encontrados")
+                self.data['projetos'] = None
+           
+                
+        except Exception as e:
+            print(f"Erro ao extrair os projetos: {e}")
+            self.data['projetos'] = None
+            
+            
+    #Fazer a separação das orientacoes concluidas
+    #Fazer a extração dos projetos
         
     # Método principal que orquestra todas as extrações.
     def parse(self):
        
         print("Iniciando análise do Lattes...")
-        # self.extract_name()
-        # self.extract_lattes_id()
-        # self.extract_address()
-        # self.extract_activity()
-        # self.extract_articles()
+        self.extract_name()
+        self.extract_lattes_id()
+        self.extract_address()
+        self.extract_activity()
+        self.extract_articles()
         self.extract_productions()
+        self.extract_orientations()
+        self.extract_projects()
         
         print("Análise concluída.")
         return self.data
