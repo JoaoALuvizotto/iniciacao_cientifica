@@ -252,36 +252,55 @@ class LattesParser:
     def extract_projects(self):
         try:
             projects_list = []
-            projects_tag = self.soup.find('a', attrs={'name':'ProjetosPesquisa'})
+            projects_tag = self.soup.find('a', attrs={'name': 'ProjetosPesquisa'})
+            
             if projects_tag:
-                projects = projects_tag.find_next('div', class_='data-cell')
-                for project in projects:
-                    project_text = project.get_text(strip=True)
-                    project_text = re.sub(r'\s+', ' ', project_text)
-                    match = re.search(r'^(\d{4}\s*-\s*(?:Atual|\d{4}))\.?\s*(.*)', project_text)
-                    period = match.group(1)
-                    text = match.group(2)
+                data_cell = projects_tag.find_next('div', class_='data-cell')
+                
+                if data_cell:
+                    # Pega todos os textos do projeto
+                    items = data_cell.find_all('div', class_='layout-cell-pad-5')
                     
-                    if "Descrição:" in text:
-                        parts = text.split("Descrição:")
-                        title = parts[0].strip(" .")
-                        description = parts[1].strip()
-                    else:
-                        title = title
-                        description = "" 
+                    current_project = None
+                    
+                    for item in items:
+                        text = item.get_text(strip=True)
+                        text = re.sub(r'\s+', ' ', text) # Limpeza de espaços
                         
-                    projects_list.append({
-                            'periodo': period,
-                            'titulo': title,
-                            'descricao': description
-                        })
+                        # Verifica se é o ano
+                        match_ano = re.search(r'^(\d{4}\s*-\s*(?:Atual|\d{4}))', text)
+                        
+                        if match_ano:
+                            if current_project:
+                                projects_list.append(current_project)
+                            
+                            periodo = match_ano.group(1).strip()
+                            
+                            resto = text[match_ano.end():].strip(" .")
+                            titulo = resto if len(resto) > 2 else ""
+                            
+                            current_project = {
+                                'periodo': periodo,
+                                'titulo': titulo
+                            }
+                        
+                        # Se não for o ano pode ser o titulo
+                        elif current_project and not current_project['titulo']:
+                            keywords_ignoradas = ["Descrição:", "Situação:", "Integrantes:", "Coordenador:", "Financiador(es):"]
+                            
+                            # Só salva se não for metadado e tiver texto suficiente
+                            if len(text) > 2 and not any(k in text for k in keywords_ignoradas):
+                                current_project['titulo'] = text.strip(" .")
+
+                    # Salva o ultimo projeto
+                    if current_project:
+                        projects_list.append(current_project)
                     
                     self.data['projetos'] = projects_list
             else:
                 print("Projetos de pesquisa não encontrados")
-                self.data['projetos'] = None
+                self.data['projetos'] = []
            
-                
         except Exception as e:
             print(f"Erro ao extrair os projetos: {e}")
             self.data['projetos'] = None
