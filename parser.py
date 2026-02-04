@@ -338,7 +338,7 @@ if __name__ == "__main__":
         for campo, valor in dados_do_curriculo.items(): 
             print(campo, valor)
         
-        with open('curriculo.json', 'w', encoding='utf-8') as json_file:
+        with open(dados_do_curriculo['nome_completo']+'.json', 'w', encoding='utf-8') as json_file:
             json.dump(dados_do_curriculo, json_file, indent=4, ensure_ascii=False)
 
     except FileNotFoundError:
