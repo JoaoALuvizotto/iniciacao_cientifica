@@ -1,6 +1,7 @@
 from collections import defaultdict
 from bs4 import BeautifulSoup
 import re
+import json
 
 class LattesParser:
     
@@ -197,7 +198,6 @@ class LattesParser:
                 
     def extract_orientations(self):
         try:
-            # Lista com o "Nome da Tag no HTML" e a "Chave" onde você quer salvar
             tipos = [
                 ('Orientacoesconcluidas', 'orientacoes_concluidas'),
                 ('Orientacaoemandamento', 'orientacoes_em_andamento')
@@ -206,40 +206,39 @@ class LattesParser:
             for tag_html, chave_dic in tipos:
                 lista_orientacoes = []
                 
-                # 1. Busca a âncora
-                orientation_tag = self.soup.find('a', attrs={'name': tag_html})
+                # 1. Encontra a âncora
+                anchor = self.soup.find('a', attrs={'name': tag_html})
                 
-                if orientation_tag:
-                    data_cell = orientation_tag.find_next('div', class_='data-cell')
-                    
-                    if data_cell:
-                        orientations = data_cell.find_all('div', class_='layout-cell-pad-5')
+                if anchor:
+                    for sibling in anchor.find_next_siblings():
                         
-                        for orientation in orientations:
-                            texto = orientation.get_text(strip=True)
-                            texto = re.sub(r'\s+', ' ', texto)
+                        if sibling.name == 'a' and sibling.has_attr('name'):
+                            break
+                        
+                        if sibling.name == 'div' and 'layout-cell-11' in sibling.get('class', []):
+                            texto = sibling.get_text(strip=True)
+                            texto = re.sub(r'\s+', ' ', texto) # Limpa espaços
                             
-                            # Padrão: Nome. Título. Ano. Resto
-                            match = re.search(r'^([^.]+)\.\s+(.+?)\.\s+(\d{4})\.\s*(.*)', texto)
+                            match = re.search(
+                                r"^\s*(?P<nome>.+)\.\s+(?P<titulo>.+?)\.\s*(?:In[ií]cio:\s)?(?P<ano>\d{4})",
+                                texto,
+                                re.IGNORECASE | re.DOTALL
+                            )
                             
                             if match:
                                 dados = {
-                                    'aluno': match.group(1).strip(),
-                                    'titulo': match.group(2).strip(),
-                                    'ano': match.group(3).strip(),
-                                    'instituicao': match.group(4).strip()
+                                    'aluno': match.group('nome').strip(),
+                                    'titulo': match.group('titulo').strip(),
+                                    'ano': match.group('ano').strip(),
                                 }
                             else:
+                                # Fallback caso a regex falhe
                                 dados = {
-                                    'aluno': texto, 
-                                    'titulo': '', 
-                                    'ano': '', 
-                                    'instituicao': ''
+                                    'aluno': texto, 'titulo': '', 'ano': ''
                                 }
-                                
+                            
                             lista_orientacoes.append(dados)
                 
-
                 self.data[chave_dic] = lista_orientacoes
 
         except Exception as e:
@@ -338,8 +337,13 @@ if __name__ == "__main__":
         
         for campo, valor in dados_do_curriculo.items(): 
             print(campo, valor)
+        
+        with open('curriculo.json', 'w', encoding='utf-8') as json_file:
+            json.dump(dados_do_curriculo, json_file, indent=4, ensure_ascii=False)
 
     except FileNotFoundError:
         print(f"Erro: Arquivo '{html_file_path}' não encontrado.")
     except Exception as e:
         print(f"Um erro inesperado ocorreu: {e}")
+
+    
