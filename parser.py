@@ -29,9 +29,9 @@ class LattesParser:
             id_tag = self.soup.find('span', style='font-weight: bold; color: #326C99;')
             
             if id_tag:
-                self.data['id_lattes'] = id_tag.text.strip()
+                self.data['_id'] = id_tag.text.strip()
             else:
-                self.data['id_lattes'] = None
+                self.data['_id'] = None
         except Exception as e:
             print(f"Erro ao extrair ID Lattes: {e}")
             self.data['id_lattes'] = None
@@ -304,16 +304,13 @@ class LattesParser:
             print(f"Erro ao extrair os projetos: {e}")
             self.data['projetos'] = None
             
-            
-    #Fazer a separação das orientacoes concluidas
-    #Fazer a extração dos projetos
         
     # Método principal que orquestra todas as extrações.
     def parse(self):
        
         print("Iniciando análise do Lattes...")
-        self.extract_name()
         self.extract_lattes_id()
+        self.extract_name()
         self.extract_address()
         self.extract_activity()
         self.extract_articles()
@@ -326,24 +323,82 @@ class LattesParser:
 
 
 if __name__ == "__main__":
-    html_file_path = 'sahudy.html' 
+    
+    lista_ids = [
+    "4706525645223041",
+    "5212303626376503",
+    "0038936541518854",
+    "9754332336954137",
+    "5119417295487126",
+    "6923877786371495",
+    "6743301470746932",
+    "6847311664433673",
+    "9403804691367376",
+    "3532058764024942",
+    "5321313558714462",
+    "4579286987089372",
+    "1957942090126269",
+    "8498467320034486",
+    "9933650905615452",
+    "0461451015026948",
+    "1624091546521389",
+    "9542083518570573",
+    "6881990637613409",
+    "8251270609012225",
+    "0391758954520783",
+    "3486202914688351",
+    "8516223928904348",
+    "7020467292690112",
+    "5333709865535244",
+    "5236549058240153",
+    "4990968421738051",
+    "5444380855577045",
+    "0422652925722673",
+    "4746829076971556",
+    "7287108960864123",
+    "0677617028146410",
+    "1705430650855494",
+    "2896049826673626",
+    "1413071683140519",
+    "5839043594908917",
+    "2870655742911951",
+    "6652079760634274",
+    "5449448657729439",
+    "7670383899259509",
+    "0769819544839146",
+    "0309287112277751",
+    "7570230588831120",
+    "5185829124608696",
+    "8528111459865939",
+    "0920196032137472",
+    "9170893104155674",
+    "9632409046763256",
+    "6446047463034654",
+    "3687551763124327",
+    "7952918513827867",
+    "0616238673458322",
+    "0987355219242506"
+]
+   
+    for id in lista_ids:
+        html_file_path = 'curriculos/' + id
 
-    try:
-        with open(html_file_path, 'r', encoding='utf-8') as fp:
-            html_content = fp.read()
-        
-        lattes_parser = LattesParser(html_content)
-        dados_do_curriculo = lattes_parser.parse()
-        
-        for campo, valor in dados_do_curriculo.items(): 
-            print(campo, valor)
-        
-        with open(dados_do_curriculo['nome_completo']+'.json', 'w', encoding='utf-8') as json_file:
-            json.dump(dados_do_curriculo, json_file, indent=4, ensure_ascii=False)
+        try:
+            with open(html_file_path, 'r', encoding='utf-8') as fp:
+                html_content = fp.read()
+            
+            lattes_parser = LattesParser(html_content)
+            dados_do_curriculo = lattes_parser.parse()
+            
+            for campo, valor in dados_do_curriculo.items(): 
+                print(campo, valor)
+            
+            with open(dados_do_curriculo['nome_completo']+'.json', 'w', encoding='utf-8') as json_file:
+                json.dump(dados_do_curriculo, json_file, indent=4, ensure_ascii=False)
 
-    except FileNotFoundError:
-        print(f"Erro: Arquivo '{html_file_path}' não encontrado.")
-    except Exception as e:
-        print(f"Um erro inesperado ocorreu: {e}")
+        except FileNotFoundError:
+            print(f"Erro: Arquivo '{html_file_path}' não encontrado.")
+        except Exception as e:
+            print(f"Um erro inesperado ocorreu: {e}")
 
     

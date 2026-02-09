@@ -1,4 +1,5 @@
 /venv
+/curriculos
 __pycache__/
 *.pyc
 *.json
