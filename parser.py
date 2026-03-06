@@ -34,7 +34,7 @@ class LattesParser:
                 self.data['_id'] = None
         except Exception as e:
             print(f"Erro ao extrair ID Lattes: {e}")
-            self.data['id_lattes'] = None
+            self.data['_id'] = None
     
     # Extrai o endereço profissional.
     def extract_address(self):
@@ -51,7 +51,7 @@ class LattesParser:
 
             endereco_bruto = endereco_cell.get_text(separator='\n', strip=True)
             
-            endereco_limpo = re.sub(r'\s+', ' ', endereco_bruto)
+            endereco_limpo = re.sub(r'\n+', ', ', endereco_bruto)
             
             self.data['endereco'] = endereco_limpo.strip()
 
@@ -67,8 +67,13 @@ class LattesParser:
                 raise ValueError("Rótulo 'Áreas de atuação' não encontrado.")
             
             pai_tag = activity_tag.find_parent('div', class_='title-wrapper')
+            
             #pegando todas as areas e subareas
             activity_pai = pai_tag.find('div', class_='data-cell')
+            # Fallback de segurança
+            if not activity_pai:
+                activity_pai = pai_tag
+                
             activities = activity_pai.find_all('div', class_='layout-cell-9')
             
             # cria um dicionário de listas, para não haver substituição dos valores das chaves
@@ -77,32 +82,92 @@ class LattesParser:
                 #pegando as grande áreas, Áreas e as subáreas 
                 texto_area = area.get_text(strip = True)
                 palavra_chave = r'\s+/\s+Área:\s+'
+                
+                # Verifica se a palavra-chave "Área:" existe antes de tentar cortar
+                if not re.search(palavra_chave, texto_area):
+                    continue
+                
                 partes = re.split(palavra_chave, texto_area, maxsplit=2)
                 
                 #removendo as grande áreas, para termos somente as áreas e subáreas
                 segunda_parte = partes[1].strip()
+                
                 #extraindo as subáreas
                 palavra_chave2 = r'\s+/\s+Subárea:\s+'
                 partes2 = re.split(palavra_chave2, segunda_parte)
                 
                 chave_area = partes2[0]
-                valor_subarea = partes2[1]
                 
-                #Limpando a string de subárea, removendo os \t e \n e os pontos desnecessários
-                valor_subarea = re.sub(r'\s+', ' ', valor_subarea)
-                valor_subarea = re.sub(r'\.', ' ', valor_subarea)
-                valor_subarea = valor_subarea.strip()
+                # Remove o ponto final que pode sobrar na Área caso não haja subárea
+                chave_area = re.sub(r'\.', '', chave_area).strip()
                 
-                #Adicionando ao dicionário de listas
-                areas[chave_area].append(valor_subarea)
+                # Verifica se a divisão encontrou uma subárea 
+                if len(partes2) > 1:
+                    valor_subarea = partes2[1]
+                    
+                    #Limpando a string de subárea, removendo os \t e \n e os pontos desnecessários
+                    valor_subarea = re.sub(r'\s+', ' ', valor_subarea)
+                    valor_subarea = re.sub(r'\.', ' ', valor_subarea)
+                    valor_subarea = valor_subarea.strip()
+                    
+                    #Adicionando ao dicionário de listas (evitando duplicatas)
+                    if valor_subarea not in areas[chave_area]:
+                        areas[chave_area].append(valor_subarea)
+                else:
+                    # Se não houver subárea, apenas registra a chave da Área sem nenhum valor na lista
+                    if chave_area not in areas:
+                        areas[chave_area] = []
                 
-            
-            self.data['area de atuacao'] = dict(areas)
+            self.data['area_de_atuacao'] = dict(areas)
             
         except Exception as e:
             print(f"Erro ao extrair as áreas de atuação: {e}")
-            self.data['area de atuacao'] = None
+            self.data['area_de_atuacao'] = None
+            
+    def processar_citacao_artigo(self, texto_bruto):
+        """
+        Recebe a string completa da citação do Lattes e retorna
+        uma lista de dicionários de autores e o título da publicação.
+        """
+        # 1. Divide o texto pelo separador de autores da ABNT
+        partes = texto_bruto.split(';')
 
+        colaboradores = []
+        titulo_artigo = ""
+
+        for i, parte in enumerate(partes):
+            parte = parte.strip()
+            
+            # Se não for o último item da lista, é com certeza apenas um autor
+            if i < len(partes) - 1:
+                colaboradores.append({
+                    "nome": parte, 
+                    "id_lattes": ""
+                })
+            else:
+                # É o último pedaço, que contém: "Último Autor . Título . Revista . Ano"
+                
+                match = re.search(r'^(.*?)\.\s+(.*)', parte)
+                
+                if match:
+                    ultimo_autor = match.group(1).strip()
+                    resto_da_citacao = match.group(2).strip()
+                    
+                    if ultimo_autor.endswith('.'):
+                        ultimo_autor = ultimo_autor[:-1].strip()
+                        
+                    colaboradores.append({
+                        "nome": ultimo_autor, 
+                        "id_lattes": ""
+                    })
+                    
+                    # O título do artigo geralmente é tudo até o próximo ponto final
+                    titulo_artigo = resto_da_citacao.split('.')[0].strip()
+                else:
+                    titulo_artigo = parte
+
+        return colaboradores, titulo_artigo
+    
     def extract_articles(self):
         try:
             articles_tags = self.soup.find_all('div', class_='artigo-completo')
@@ -126,12 +191,18 @@ class LattesParser:
                 texto_completo = texto_completo.strip()
                 
                 #lista de dicionarios para armazenar no dicionario principal
+                colaboradores, titulo = self.processar_citacao_artigo(texto_completo)
+                
                 dados_artigo = {
                     'doi': link_doi,
+                    'titulo': titulo, # Salvando o título limpo
+                    'colaboradores': colaboradores, # Salvando a lista mastigada!
                     'texto_completo': texto_completo
                 }
                 lista_artigos.append(dados_artigo)
-                self.data['artigos'] = lista_artigos
+            
+            # Mudando o nome da chave para o que o filling_idlattes.py espera
+            self.data['listaPB'] = lista_artigos
                 
         except Exception as e:
             print(f"Erro ao extrair artigos publicados: {e}")
@@ -303,8 +374,24 @@ class LattesParser:
         except Exception as e:
             print(f"Erro ao extrair os projetos: {e}")
             self.data['projetos'] = None
-            
         
+    def extract_citation_names(self):
+        try:
+            nomes_tag = self.soup.find('b', string=re.compile(r'Nome em citações bibliográficas'))
+            if nomes_tag:
+                parent_div = nomes_tag.find_parent('div', class_='layout-cell-3')
+                sibling_div = parent_div.find_next_sibling('div', class_='layout-cell-9')
+                nomes_brutos = sibling_div.get_text(strip=True)
+                
+                # Separa os nomes por ponto e vírgula e limpa os espaços
+                lista_nomes = [nome.strip() for nome in nomes_brutos.split(';') if nome.strip()]
+                self.data['listaNomesCitacao'] = lista_nomes
+            else:
+                self.data['listaNomesCitacao'] = []
+        except Exception as e:
+            print(f"Erro ao extrair nomes de citação: {e}")
+            self.data['listaNomesCitacao'] = []   
+    
     # Método principal que orquestra todas as extrações.
     def parse(self):
        
@@ -317,6 +404,7 @@ class LattesParser:
         self.extract_productions()
         self.extract_orientations()
         self.extract_projects()
+        self.extract_citation_names()
         
         print("Análise concluída.")
         return self.data
@@ -393,7 +481,7 @@ if __name__ == "__main__":
             for campo, valor in dados_do_curriculo.items(): 
                 print(campo, valor)
             
-            with open(dados_do_curriculo['nome_completo']+'.json', 'w', encoding='utf-8') as json_file:
+            with open('curriculos_json/' + dados_do_curriculo['nome_completo']+'.json', 'w', encoding='utf-8') as json_file:
                 json.dump(dados_do_curriculo, json_file, indent=4, ensure_ascii=False)
 
         except FileNotFoundError:
@@ -401,4 +489,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Um erro inesperado ocorreu: {e}")
 
-    
+    #verificar o pq q tem alguns curriculos com null na area de atuação
+    #verificar se já há alguma conexão entre os curriculos
+    #verificar em qual lingua está escrita as palavras para fazer o pln

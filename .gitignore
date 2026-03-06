@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 *.json
 *.txt
+*.html
+import_mongo.py
+teste_pln.py
