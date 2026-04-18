@@ -40,20 +40,26 @@ class LattesParser:
     def extract_address(self):
         try:
             endereco_tag = self.soup.find('b', string=re.compile(r'Endereço Profissional'))
-            
             if not endereco_tag:
-                raise ValueError("Rótulo 'Endereço Profissional' não encontrado.")
+                self.data['endereco'] = None
+                return
 
-            #navagando pela árvore do endereço
             endereco_pai = endereco_tag.find_parent('div', class_='layout-cell-3')
-
             endereco_cell = endereco_pai.find_next_sibling('div', class_='layout-cell-9')
-
-            endereco_bruto = endereco_cell.get_text(separator='\n', strip=True)
             
-            endereco_limpo = re.sub(r'\n+', ', ', endereco_bruto)
-            
-            self.data['endereco'] = endereco_limpo.strip()
+            if endereco_cell:
+                # Troca os <br> por vírgulas para manter o endereçamento organizado
+                for br in endereco_cell.find_all('br'):
+                    br.replace_with(', ')
+                
+                texto = endereco_cell.get_text(separator=' ', strip=True)
+                # Remove o excesso de espaços e tabs do HTML original
+                texto = re.sub(r'\s+', ' ', texto)
+                texto = texto.replace(':,', ':').replace(', ,', ',')
+                
+                self.data['endereco'] = texto.strip()
+            else:
+                self.data['endereco'] = None
 
         except Exception as e:
             print(f"Erro ao extrair endereço: {e}")
@@ -124,54 +130,45 @@ class LattesParser:
             print(f"Erro ao extrair as áreas de atuação: {e}")
             self.data['area_de_atuacao'] = None
             
-    def processar_citacao_artigo(self, texto_bruto):
-        """
-        Recebe a string completa da citação do Lattes e retorna
-        uma lista de dicionários de autores e o título da publicação.
-        """
-        # 1. Divide o texto pelo separador de autores da ABNT
-        partes = texto_bruto.split(';')
-
-        colaboradores = []
-        titulo_artigo = ""
-
-        for i, parte in enumerate(partes):
-            parte = parte.strip()
+    def processar_citacao_artigo(self, html_cell):
+        for info in html_cell.find_all('span', class_='informacao-artigo'):
+            info.decompose()
             
-            # Se não for o último item da lista, é com certeza apenas um autor
-            if i < len(partes) - 1:
-                colaboradores.append({
-                    "nome": parte, 
-                    "id_lattes": ""
-                })
-            else:
-                # É o último pedaço, que contém: "Último Autor . Título . Revista . Ano"
-                
-                match = re.search(r'^(.*?)\.\s+(.*)', parte)
-                
-                if match:
-                    ultimo_autor = match.group(1).strip()
-                    resto_da_citacao = match.group(2).strip()
-                    
-                    if ultimo_autor.endswith('.'):
-                        ultimo_autor = ultimo_autor[:-1].strip()
-                        
-                    colaboradores.append({
-                        "nome": ultimo_autor, 
-                        "id_lattes": ""
-                    })
-                    
-                    # O título do artigo geralmente é tudo até o próximo ponto final
-                    titulo_artigo = resto_da_citacao.split('.')[0].strip()
-                else:
-                    titulo_artigo = parte
+        for citado in html_cell.find_all('span', class_='citado'):
+            citado.decompose()
+            
+        for img in html_cell.find_all('img'):
+            img.decompose()
+            
+        texto_completo = html_cell.get_text(separator=' ', strip=True)
+        texto_completo = re.sub(r'\s+', ' ', texto_completo)
+        texto_limpo = re.sub(r'[\.,\s:-]+$', '.', texto_completo)
+        
+        partes = re.split(r'(?:\s\.\s|\.\.\s)', texto_limpo, maxsplit=1)
+        
+        colaboradores = []
+        titulo_artigo = "Título não identificado"
+        
+        if len(partes) > 1:
+            bloco_autores = partes[0].strip()
+            resto = partes[1].strip()
+            
+            for autor in bloco_autores.split(';'):
+                nome_limpo = autor.strip()
+                if nome_limpo:
+                    colaboradores.append({"nome": nome_limpo, "id_lattes": ""})
+            
+            partes_resto = re.split(r'\.\s', resto, maxsplit=1)
+            if partes_resto:
+                titulo_artigo = partes_resto[0].strip()
+        else:
+            colaboradores.append({"nome": texto_limpo, "id_lattes": ""})
 
-        return colaboradores, titulo_artigo
+        return colaboradores, titulo_artigo, texto_limpo
     
     def extract_articles(self):
         try:
             articles_tags = self.soup.find_all('div', class_='artigo-completo')
-            #print(articles_tags)
             
             if not articles_tags:
                 raise ValueError("Rótulo 'artigo completo' não encontrado.")
@@ -179,34 +176,58 @@ class LattesParser:
             lista_artigos = []
             for artigo in articles_tags:
                 artigo_tag = artigo.find('div', class_='layout-cell-11')
+                
+                if not artigo_tag:
+                    continue
+
                 doi_tag = artigo_tag.find('a', class_='icone-doi')
-                if doi_tag:
-                    link_doi = doi_tag['href']
-                else:
-                    link_doi = None
+                link_doi = doi_tag['href'] if doi_tag else None
                 
-                # Limpando o texto do artigo
-                texto_completo = artigo_tag.get_text(strip = True)
-                texto_completo = re.sub(r'\s+', ' ', texto_completo)
-                texto_completo = texto_completo.strip()
-                
-                #lista de dicionarios para armazenar no dicionario principal
-                colaboradores, titulo = self.processar_citacao_artigo(texto_completo)
+                # CORREÇÃO 1 e 2: Passamos a tag HTML inteira (artigo_tag) e recebemos as 3 variáveis
+                colaboradores, titulo, texto_limpo = self.processar_citacao_artigo(artigo_tag)
                 
                 dados_artigo = {
                     'doi': link_doi,
-                    'titulo': titulo, # Salvando o título limpo
-                    'colaboradores': colaboradores, # Salvando a lista mastigada!
-                    'texto_completo': texto_completo
+                    'titulo': titulo,
+                    'colaboradores': colaboradores,
+                    'texto_completo': texto_limpo
                 }
+                    
                 lista_artigos.append(dados_artigo)
             
-            # Mudando o nome da chave para o que o filling_idlattes.py espera
+            # Preenche a listaPB corretamente e garante que a chave 'artigos' não fique solta/nula
             self.data['listaPB'] = lista_artigos
+            if 'artigos' in self.data:
+                del self.data['artigos']
                 
         except Exception as e:
             print(f"Erro ao extrair artigos publicados: {e}")
+            self.data['listaPB'] = []
             self.data['artigos'] = None
+            
+    #adicionar linhas de pesquisas
+    def extract_research_lines(self):
+        linhas_pesquisa = []
+        try:
+            ancora_linhas = self.soup.find('a', {'name': 'LinhaPesquisa'})
+               
+            container_secao = ancora_linhas.find_parent('div', class_='title-wrapper')
+                
+            data_cell = container_secao.find('div', class_='data-cell')
+                     
+            celulas_pesquisa = data_cell.find_all('div', class_='layout-cell-9')
+                        
+            for celula in celulas_pesquisa:
+                texto_bruto = celula.get_text(separator=' ', strip=True)
+                texto_limpo = re.sub(r'\s+', ' ', texto_bruto)
+                
+                if texto_limpo and texto_limpo not in linhas_pesquisa:
+                    linhas_pesquisa.append(texto_limpo)
+                    
+        except Exception as e:
+            print(f"Não foi possível extrair linhas de pesquisa. Erro: {e}")
+            
+        self.data['linhas_pesquisa'] = linhas_pesquisa
         
     def extract_generic_productions(self, target):
         # Quando passa a tag name no argumento target
@@ -318,7 +339,6 @@ class LattesParser:
             self.data['orientacoes_em_andamento'] = []
             
     
-    #Ajustar para pegar somente o titulo do projeto e o período
     def extract_projects(self):
         try:
             projects_list = []
@@ -335,7 +355,7 @@ class LattesParser:
                     
                     for item in items:
                         text = item.get_text(strip=True)
-                        text = re.sub(r'\s+', ' ', text) # Limpeza de espaços
+                        text = re.sub(r'\s+', ' ', text)
                         
                         # Verifica se é o ano
                         match_ano = re.search(r'^(\d{4}\s*-\s*(?:Atual|\d{4}))', text)
@@ -382,10 +402,13 @@ class LattesParser:
                 parent_div = nomes_tag.find_parent('div', class_='layout-cell-3')
                 sibling_div = parent_div.find_next_sibling('div', class_='layout-cell-9')
                 nomes_brutos = sibling_div.get_text(strip=True)
+                nomes_limpos = re.sub(r'\s+', ' ', nomes_brutos)
                 
                 # Separa os nomes por ponto e vírgula e limpa os espaços
-                lista_nomes = [nome.strip() for nome in nomes_brutos.split(';') if nome.strip()]
-                self.data['listaNomesCitacao'] = lista_nomes
+                lista_nomes = [nome.strip() for nome in nomes_limpos.split(';') if nome.strip()]
+                # Usando set para termos uma lista de elementos unicos
+                self.data['listaNomesCitacao'] = sorted(list(set(lista_nomes)))
+                
             else:
                 self.data['listaNomesCitacao'] = []
         except Exception as e:
@@ -405,6 +428,7 @@ class LattesParser:
         self.extract_orientations()
         self.extract_projects()
         self.extract_citation_names()
+        self.extract_research_lines()
         
         print("Análise concluída.")
         return self.data
@@ -413,6 +437,7 @@ class LattesParser:
 if __name__ == "__main__":
     
     lista_ids = [
+    "9826346918182685",
     "4706525645223041",
     "5212303626376503",
     "0038936541518854",
@@ -467,7 +492,6 @@ if __name__ == "__main__":
     "0616238673458322",
     "0987355219242506"
 ]
-   
     for id in lista_ids:
         html_file_path = 'curriculos/' + id
 
