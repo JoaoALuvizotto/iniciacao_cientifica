@@ -64,6 +64,36 @@ class LattesParser:
         except Exception as e:
             print(f"Erro ao extrair endereço: {e}")
             self.data['endereco'] = None
+
+    # Extrai endereços históricos.
+    def extract_historical_addresses(self):
+        try:
+            enderecos_historicos = []
+            endereco_tags = self.soup.find_all('b', string=re.compile(r'Endereço[s]?\s+Histórico[s]?', re.IGNORECASE))
+            
+            for endereco_tag in endereco_tags:
+                endereco_pai = endereco_tag.find_parent('div', class_='layout-cell-3')
+                if not endereco_pai:
+                    continue
+                
+                endereco_cell = endereco_pai.find_next_sibling('div', class_='layout-cell-9')
+                if endereco_cell:
+                    for br in endereco_cell.find_all('br'):
+                        br.replace_with(', ')
+                    
+                    texto = endereco_cell.get_text(separator=' ', strip=True)
+                    texto = re.sub(r'\s+', ' ', texto)
+                    texto = texto.replace(':,', ':').replace(', ,', ',')
+                    texto_limpo = texto.strip()
+                    
+                    if texto_limpo and texto_limpo not in enderecos_historicos:
+                        enderecos_historicos.append(texto_limpo)
+            
+            self.data['enderecos_historicos'] = enderecos_historicos
+
+        except Exception as e:
+            print(f"Erro ao extrair endereços históricos: {e}")
+            self.data['enderecos_historicos'] = []
     
     def extract_activity(self):
         try:
@@ -74,7 +104,7 @@ class LattesParser:
             
             pai_tag = activity_tag.find_parent('div', class_='title-wrapper')
             
-            #pegando todas as areas e subareas
+            # pegando todas as areas e subareas
             activity_pai = pai_tag.find('div', class_='data-cell')
             # Fallback de segurança
             if not activity_pai:
@@ -85,8 +115,8 @@ class LattesParser:
             # cria um dicionário de listas, para não haver substituição dos valores das chaves
             areas = defaultdict(list)
             for area in activities:
-                #pegando as grande áreas, Áreas e as subáreas 
-                texto_area = area.get_text(strip = True)
+                # pegando as grande áreas, Áreas e as subáreas 
+                texto_area = area.get_text(strip=True)
                 palavra_chave = r'\s+/\s+Área:\s+'
                 
                 # Verifica se a palavra-chave "Área:" existe antes de tentar cortar
@@ -95,10 +125,10 @@ class LattesParser:
                 
                 partes = re.split(palavra_chave, texto_area, maxsplit=2)
                 
-                #removendo as grande áreas, para termos somente as áreas e subáreas
+                # removendo as grande áreas, para termos somente as áreas e subáreas
                 segunda_parte = partes[1].strip()
                 
-                #extraindo as subáreas
+                # extraindo as subáreas
                 palavra_chave2 = r'\s+/\s+Subárea:\s+'
                 partes2 = re.split(palavra_chave2, segunda_parte)
                 
@@ -111,12 +141,12 @@ class LattesParser:
                 if len(partes2) > 1:
                     valor_subarea = partes2[1]
                     
-                    #Limpando a string de subárea, removendo os \t e \n e os pontos desnecessários
+                    # Limpando a string de subárea, removendo os \t e \n e os pontos desnecessários
                     valor_subarea = re.sub(r'\s+', ' ', valor_subarea)
                     valor_subarea = re.sub(r'\.', ' ', valor_subarea)
                     valor_subarea = valor_subarea.strip()
                     
-                    #Adicionando ao dicionário de listas (evitando duplicatas)
+                    # Adicionando ao dicionário de listas (evitando duplicatas)
                     if valor_subarea not in areas[chave_area]:
                         areas[chave_area].append(valor_subarea)
                 else:
@@ -183,7 +213,6 @@ class LattesParser:
                 doi_tag = artigo_tag.find('a', class_='icone-doi')
                 link_doi = doi_tag['href'] if doi_tag else None
                 
-                # CORREÇÃO 1 e 2: Passamos a tag HTML inteira (artigo_tag) e recebemos as 3 variáveis
                 colaboradores, titulo, texto_limpo = self.processar_citacao_artigo(artigo_tag)
                 
                 dados_artigo = {
@@ -195,7 +224,6 @@ class LattesParser:
                     
                 lista_artigos.append(dados_artigo)
             
-            # Preenche a listaPB corretamente e garante que a chave 'artigos' não fique solta/nula
             self.data['listaPB'] = lista_artigos
             if 'artigos' in self.data:
                 del self.data['artigos']
@@ -205,7 +233,7 @@ class LattesParser:
             self.data['listaPB'] = []
             self.data['artigos'] = None
             
-    #adicionar linhas de pesquisas
+    # Adicionar linhas de pesquisas
     def extract_research_lines(self):
         linhas_pesquisa = []
         try:
@@ -240,36 +268,31 @@ class LattesParser:
             producao_tag = encontrado.find_parent('b')
             producao_pai = producao_tag.find_parent('div', class_='cita-artigos')
             sibling = producao_pai.find_next_sibling('div')
-        #Quando a div é passada como argumento 
+        # Quando a div é passada como argumento 
         else:
             sibling = target.find_next_sibling('div')
             
         textos_producoes = []
         while sibling:
-            classes_producoes = []
             classes_producoes = sibling.get('class', [])
             
             if 'cita-artigos' in classes_producoes or 'inst_back' in classes_producoes:
                 break
             
             if 'layout-cell-11' in classes_producoes: 
-                texto_producao = sibling.get_text(strip = True)
+                texto_producao = sibling.get_text(strip=True)
                 texto_limpo = re.sub(r'\s+', ' ', texto_producao)
                 textos_producoes.append(texto_limpo)
             
             sibling = sibling.find_next_sibling('div')
         
-        
-        
         return textos_producoes
     
-    
     def extract_productions(self):
-        
         revistas = self.extract_generic_productions('TextosJornaisRevistas') 
         self.data['producao_revistas'] = revistas
         
-        todas_ancoras = self.soup.find_all('a', attrs={'name':'TrabalhosPublicadosAnaisCongresso'})
+        todas_ancoras = self.soup.find_all('a', attrs={'name': 'TrabalhosPublicadosAnaisCongresso'})
         
         for ancora in todas_ancoras:
             tag_b = ancora.find_parent('b')
@@ -338,7 +361,6 @@ class LattesParser:
             self.data['orientacoes_concluidas'] = []
             self.data['orientacoes_em_andamento'] = []
             
-    
     def extract_projects(self):
         try:
             projects_list = []
@@ -348,7 +370,6 @@ class LattesParser:
                 data_cell = projects_tag.find_next('div', class_='data-cell')
                 
                 if data_cell:
-                    # Pega todos os textos do projeto
                     items = data_cell.find_all('div', class_='layout-cell-pad-5')
                     
                     current_project = None
@@ -357,7 +378,6 @@ class LattesParser:
                         text = item.get_text(strip=True)
                         text = re.sub(r'\s+', ' ', text)
                         
-                        # Verifica se é o ano
                         match_ano = re.search(r'^(\d{4}\s*-\s*(?:Atual|\d{4}))', text)
                         
                         if match_ano:
@@ -374,15 +394,12 @@ class LattesParser:
                                 'titulo': titulo
                             }
                         
-                        # Se não for o ano pode ser o titulo
                         elif current_project and not current_project['titulo']:
                             keywords_ignoradas = ["Descrição:", "Situação:", "Integrantes:", "Coordenador:", "Financiador(es):"]
                             
-                            # Só salva se não for metadado e tiver texto suficiente
                             if len(text) > 2 and not any(k in text for k in keywords_ignoradas):
                                 current_project['titulo'] = text.strip(" .")
 
-                    # Salva o ultimo projeto
                     if current_project:
                         projects_list.append(current_project)
                     
@@ -404,9 +421,7 @@ class LattesParser:
                 nomes_brutos = sibling_div.get_text(strip=True)
                 nomes_limpos = re.sub(r'\s+', ' ', nomes_brutos)
                 
-                # Separa os nomes por ponto e vírgula e limpa os espaços
                 lista_nomes = [nome.strip() for nome in nomes_limpos.split(';') if nome.strip()]
-                # Usando set para termos uma lista de elementos unicos
                 self.data['listaNomesCitacao'] = sorted(list(set(lista_nomes)))
                 
             else:
@@ -422,6 +437,7 @@ class LattesParser:
         self.extract_lattes_id()
         self.extract_name()
         self.extract_address()
+        self.extract_historical_addresses()
         self.extract_activity()
         self.extract_articles()
         self.extract_productions()
@@ -437,61 +453,61 @@ class LattesParser:
 if __name__ == "__main__":
     
     lista_ids = [
-    "9826346918182685",
-    "4706525645223041",
-    "5212303626376503",
-    "0038936541518854",
-    "9754332336954137",
-    "5119417295487126",
-    "6923877786371495",
-    "6743301470746932",
-    "6847311664433673",
-    "9403804691367376",
-    "3532058764024942",
-    "5321313558714462",
-    "4579286987089372",
-    "1957942090126269",
-    "8498467320034486",
-    "9933650905615452",
-    "0461451015026948",
-    "1624091546521389",
-    "9542083518570573",
-    "6881990637613409",
-    "8251270609012225",
-    "0391758954520783",
-    "3486202914688351",
-    "8516223928904348",
-    "7020467292690112",
-    "5333709865535244",
-    "5236549058240153",
-    "4990968421738051",
-    "5444380855577045",
-    "0422652925722673",
-    "4746829076971556",
-    "7287108960864123",
-    "0677617028146410",
-    "1705430650855494",
-    "2896049826673626",
-    "1413071683140519",
-    "5839043594908917",
-    "2870655742911951",
-    "6652079760634274",
-    "5449448657729439",
-    "7670383899259509",
-    "0769819544839146",
-    "0309287112277751",
-    "7570230588831120",
-    "5185829124608696",
-    "8528111459865939",
-    "0920196032137472",
-    "9170893104155674",
-    "9632409046763256",
-    "6446047463034654",
-    "3687551763124327",
-    "7952918513827867",
-    "0616238673458322",
-    "0987355219242506"
-]
+        "9826346918182685",
+        "4706525645223041",
+        "5212303626376503",
+        "0038936541518854",
+        "9754332336954137",
+        "5119417295487126",
+        "6923877786371495",
+        "6743301470746932",
+        "6847311664433673",
+        "9403804691367376",
+        "3532058764024942",
+        "5321313558714462",
+        "4579286987089372",
+        "1957942090126269",
+        "8498467320034486",
+        "9933650905615452",
+        "0461451015026948",
+        "1624091546521389",
+        "9542083518570573",
+        "6881990637613409",
+        "8251270609012225",
+        "0391758954520783",
+        "3486202914688351",
+        "8516223928904348",
+        "7020467292690112",
+        "5333709865535244",
+        "5236549058240153",
+        "4990968421738051",
+        "5444380855577045",
+        "0422652925722673",
+        "4746829076971556",
+        "7287108960864123",
+        "0677617028146410",
+        "1705430650855494",
+        "2896049826673626",
+        "1413071683140519",
+        "5839043594908917",
+        "2870655742911951",
+        "6652079760634274",
+        "5449448657729439",
+        "7670383899259509",
+        "0769819544839146",
+        "0309287112277751",
+        "7570230588831120",
+        "5185829124608696",
+        "8528111459865939",
+        "0920196032137472",
+        "9170893104155674",
+        "9632409046763256",
+        "6446047463034654",
+        "3687551763124327",
+        "7952918513827867",
+        "0616238673458322",
+        "0987355219242506"
+    ]
     for id in lista_ids:
         html_file_path = 'curriculos/' + id
 
@@ -505,14 +521,10 @@ if __name__ == "__main__":
             for campo, valor in dados_do_curriculo.items(): 
                 print(campo, valor)
             
-            with open('curriculos_json/' + dados_do_curriculo['nome_completo']+'.json', 'w', encoding='utf-8') as json_file:
+            with open('curriculos_json/' + dados_do_curriculo['nome_completo'] + '.json', 'w', encoding='utf-8') as json_file:
                 json.dump(dados_do_curriculo, json_file, indent=4, ensure_ascii=False)
 
         except FileNotFoundError:
             print(f"Erro: Arquivo '{html_file_path}' não encontrado.")
         except Exception as e:
             print(f"Um erro inesperado ocorreu: {e}")
-
-    #verificar o pq q tem alguns curriculos com null na area de atuação
-    #verificar se já há alguma conexão entre os curriculos
-    #verificar em qual lingua está escrita as palavras para fazer o pln

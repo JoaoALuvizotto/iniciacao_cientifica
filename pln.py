@@ -67,12 +67,12 @@ class plnLattes:
             
 if __name__ == "__main__":
     
-    with open('Sahudy.json', 'r', encoding='utf-8') as json_file:
+    with open('curriculos_json/Sahudy Montenegro González.json', 'r', encoding='utf-8') as json_file:
         curriculo = json.load(json_file)
     
     pln = plnLattes(curriculo)
     print(pln.nlp.pipe_names)
     texto_curriculo = pln.transformar_curriculo_txt()
-    #pln.plnCurriculo(texto_curriculo)
+    pln.plnCurriculo(texto_curriculo)
     
     
