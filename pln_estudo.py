@@ -31,15 +31,23 @@ def extrair_textos_separados(caminho_json, anos_limite=5):
         
     if "projetos" in dados:
         for proj in dados["projetos"]:
-            periodo = proj.get("periodo", "")
-            if "Atual" in periodo:
-                textos.append(proj.get("titulo", ""))
-            else:
-                anos_encontrados = re.findall(r'\d{4}', periodo)
-                if anos_encontrados:
-                    ultimo_ano = int(anos_encontrados[-1])
-                    if ultimo_ano >= ano_corte:
-                        textos.append(proj.get("titulo", ""))
+            ano_fim_val = proj.get("ano_fim")
+            ano_fim = datetime.now().year if str(ano_fim_val).lower() == "atual" else (int(ano_fim_val) if str(ano_fim_val).isdigit() else None)
+            
+            if ano_fim is None:
+                periodo = proj.get("periodo", "")
+                if "Atual" in periodo:
+                    ano_fim = datetime.now().year
+                else:
+                    anos_encontrados = re.findall(r'\d{4}', periodo)
+                    ano_fim = int(anos_encontrados[-1]) if anos_encontrados else None
+                    
+            if ano_fim and ano_fim >= ano_corte:
+                texto_proj = proj.get("titulo", "")
+                if proj.get("descricao"):
+                    texto_proj = f"{texto_proj}. {proj.get('descricao')}".strip(" .")
+                if texto_proj:
+                    textos.append(texto_proj)
                         
     if "orientacoes_concluidas" in dados:
         for orientacao in dados["orientacoes_concluidas"]:
@@ -53,16 +61,25 @@ def extrair_textos_separados(caminho_json, anos_limite=5):
                 
     if "listaPB" in dados:
         for pub in dados["listaPB"]:
-            texto_comp = pub.get("texto_completo", "")
-            anos_pub = re.findall(r'\b(19\d{2}|20\d{2})\b', str(texto_comp))
+            ano_pub = pub.get("ano")
+            if not ano_pub:
+                texto_comp = pub.get("texto_completo", "")
+                anos_pub = re.findall(r'\b(19\d{2}|20\d{2})\b', str(texto_comp))
+                if anos_pub:
+                    ano_pub = int(anos_pub[-1])
             
-            if anos_pub:
-                ano_pub = int(anos_pub[-1])
-                if ano_pub >= ano_corte:
-                    textos.append(pub.get("titulo", ""))
+            if ano_pub and int(ano_pub) >= ano_corte:
+                textos.append(pub.get("titulo", ""))
+
+    if "trabalhos_completos" in dados:
+        for tc in dados["trabalhos_completos"]:
+            if isinstance(tc, dict):
+                ano_tc = tc.get("ano")
+                if ano_tc and int(ano_tc) >= ano_corte:
+                    textos.append(tc.get("titulo", ""))
 
     # Retorna os textos limpos de espaços vazios
-    return [t for t in textos if t.strip()]
+    return [t for t in textos if t and t.strip()]
 
 def pipeline_pln_completo(caminho_json):
     print("Carregando modelos...")
