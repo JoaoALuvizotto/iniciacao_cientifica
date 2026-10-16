@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from bs4 import BeautifulSoup
 import re
 import json
@@ -207,6 +207,58 @@ class LattesParser:
         return texto.strip()
 
     @staticmethod
+    def eh_mesmo_autor(nome_colab: str, nome_completo: str) -> bool:
+        """
+        Classificador para mineração empírica (Camada 3):
+        Verifica se um nome de colaborador nas publicações pertence ao próprio autor do currículo.
+        """
+        if not nome_colab or not nome_completo:
+            return False
+            
+        nfkd_comp = unicodedata.normalize('NFKD', nome_completo.upper())
+        comp_ascii = "".join([c for c in nfkd_comp if not unicodedata.combining(c)])
+        partes_nome = [p for p in re.sub(r'[^A-Z0-9\s]', ' ', comp_ascii).split() if p not in {'DE', 'DA', 'DO', 'DOS', 'DAS', 'E'}]
+        if len(partes_nome) < 2:
+            return False
+            
+        primeiro_nome = partes_nome[0]
+        sobrenome_principal = partes_nome[-1]
+        
+        nfkd_colab = unicodedata.normalize('NFKD', nome_colab.upper())
+        colab_ascii = "".join([c for c in nfkd_colab if not unicodedata.combining(c)])
+        tokens_colab = re.findall(r'\b[A-Z]+\b', colab_ascii)
+        if not tokens_colab:
+            return False
+            
+        # 1. Sobrenome principal deve ser um dos tokens (ou penúltimo em sobrenome composto)
+        if sobrenome_principal not in tokens_colab:
+            if len(partes_nome) >= 3 and partes_nome[-2] in tokens_colab:
+                pass
+            else:
+                return False
+
+        # 2. Rejeita prenomes estranhos com mais de 2 letras que não pertençam ao pesquisador
+        tokens_pesquisador = set(partes_nome)
+        prenomes_estranhos = [
+            t for t in tokens_colab 
+            if len(t) > 2 and t not in tokens_pesquisador and t not in {'DE', 'DA', 'DO', 'DOS', 'DAS', 'DEL', 'NETO', 'JUNIOR', 'FILHO', 'SOBRINHO'}
+        ]
+        if prenomes_estranhos:
+            return False
+
+        # 3. Caso o primeiro nome apareça por extenso
+        if primeiro_nome in tokens_colab:
+            return True
+            
+        # 4. Caso a inicial do primeiro nome apareça isolada
+        ini_primeiro = primeiro_nome[0]
+        iniciais_colab = [t for t in tokens_colab if len(t) == 1]
+        if ini_primeiro in iniciais_colab:
+            return True
+            
+        return False
+
+    @staticmethod
     def extrair_geo_endereco_texto(texto: str):
         """
         Extrai município, estado (UF) e país de cadeias de endereço no formato Lattes:
@@ -214,12 +266,22 @@ class LattesParser:
         """
         if not texto:
             return None, None, None
-        m = re.search(r'(?:(?:CEP:?\s*)?\d{5}-?\d{3}\s*[-–,]\s*)?([A-Za-zÀ-ÿ\s\.\']+),\s*([A-Z]{2})\b(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?', texto)
-        if m:
-            cidade = m.group(1).strip(" ,.-")
-            uf = m.group(2).strip()
-            pais = m.group(3).strip() if m.group(3) else "Brasil"
+        # 1. Prioriza padrão ancorado no CEP (evita falso positivo com "AC" de Aos Cuidados / Agência de Correios)
+        m_cep = re.search(r'(?:CEP:?\s*)?(\d{5}-?\d{3})\s*[-–,]\s*([A-Za-zÀ-ÿ\s\.\']+),\s*([A-Z]{2})\b(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?', texto)
+        if m_cep:
+            cidade = m_cep.group(2).strip(" ,.-")
+            uf = m_cep.group(3).strip()
+            pais = m_cep.group(4).strip() if m_cep.group(4) else "Brasil"
             return cidade, uf, pais
+
+        # 2. Fallback sem CEP
+        m = re.search(r'([A-Za-zÀ-ÿ\s\.\']+),\s*([A-Z]{2})\b(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?', texto)
+        if m:
+            uf = m.group(2).strip()
+            if uf != 'AC' or 'Acre' in texto:
+                cidade = m.group(1).strip(" ,.-")
+                pais = m.group(3).strip() if m.group(3) else "Brasil"
+                return cidade, uf, pais
         return None, None, None
 
     def resolver_geo_instituicao(self, nome_inst: str, contexto_atividades: str = ""):
@@ -235,6 +297,7 @@ class LattesParser:
             m_campus = re.search(r'Campus\s+([A-Za-zÀ-ÿ\s]+?)(?:,|$|\.)', contexto_atividades, re.IGNORECASE)
             if m_campus:
                 campus_cidade = m_campus.group(1).strip()
+                campus_cidade = re.sub(r'^(?:de|do|da|dos|das)\s+', '', campus_cidade, flags=re.IGNORECASE).strip()
                 if len(campus_cidade) > 2 and not any(k in campus_cidade.lower() for k in ['universit', 'central', 'sede']):
                     cidade_ext, uf_ext, _ = self.extrair_geo_endereco_texto(contexto_atividades)
                     if not uf_ext:
@@ -302,6 +365,49 @@ class LattesParser:
             print(f"Erro ao extrair nomes de citação: {e}")
             self.data['listaNomesCitacao'] = []
 
+    # Estratégia 4: Pipeline em Camadas para enriquecimento de listaNomesCitacao
+    def enrich_citation_names(self):
+        try:
+            nomes_dict = OrderedDict()
+            
+            # Camada 1: Citações oficiais do Lattes (se existirem)
+            for c in self.data.get('listaNomesCitacao', []):
+                limpo = self.limpar_texto(c)
+                if limpo:
+                    chave = self.normalizar_nome(limpo)
+                    if chave and chave not in nomes_dict:
+                        nomes_dict[chave] = limpo
+                        
+            # Camada 2: Mineração Empírica no Corpus de Publicações do Pesquisador (assinaturas reais em publicações)
+            id_pesquisador = self.data.get('_id', '')
+            nome_completo = self.data.get('nome_completo', '')
+            secoes = ['listaPB', 'trabalhos_completos', 'resumos_expandidos', 'resumos_publicados', 'producao_revistas']
+            for sec in secoes:
+                for pub in self.data.get(sec, []):
+                    if not isinstance(pub, dict):
+                        continue
+                    for colab in pub.get('colaboradores', []):
+                        if not isinstance(colab, dict):
+                            continue
+                        nome_colab = colab.get('nome', '').strip()
+                        id_colab = colab.get('id_lattes', '')
+                        if not nome_colab:
+                            continue
+                            
+                        # Se já tiver o ID do pesquisador ou passar no classificador eh_mesmo_autor
+                        if (id_colab and id_colab == id_pesquisador) or self.eh_mesmo_autor(nome_colab, nome_completo):
+                            limpo = self.limpar_texto(nome_colab)
+                            if limpo:
+                                chave = self.normalizar_nome(limpo)
+                                if chave and chave not in nomes_dict:
+                                    nomes_dict[chave] = limpo
+                                    
+            # Camada 3: Ordenação e Deduplicação Final
+            self.data['listaNomesCitacao'] = sorted(list(nomes_dict.values()), key=lambda x: (x.upper(), x))
+            
+        except Exception as e:
+            print(f"Erro ao enriquecer nomes de citação: {e}")
+
     # Extrai o endereço profissional atual e estrutura dados para georreferenciamento.
     def extract_address(self):
         try:
@@ -326,12 +432,21 @@ class LattesParser:
                 self.data['endereco'] = texto_limpo
                 
                 # Extrai município, UF, CEP e país estruturados
-                m_geo = re.search(r'(?:(?:CEP:?\s*)?(\d{5}-?\d{3})\s*[-–,]\s*)?([A-Za-zÀ-ÿ\s\.\']+),\s*([A-Z]{2})\b(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?', texto_limpo)
+                # 1. Tenta padrão com CEP primeiro (evita confundir AC de Aos Cuidados com Acre)
+                m_geo = re.search(r'(?:CEP:?\s*)?(\d{5}-?\d{3})\s*[-–,]\s*([A-Za-zÀ-ÿ\s\.\']+),\s*([A-Z]{2})\b(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?', texto_limpo)
+                if not m_geo:
+                    m_geo = re.search(r'([A-Za-zÀ-ÿ\s\.\']+),\s*([A-Z]{2})\b(?:\s*[-–]\s*([A-Za-zÀ-ÿ]+))?', texto_limpo)
+                    if m_geo and m_geo.group(2).strip() == 'AC' and 'Acre' not in texto_limpo:
+                        m_geo = None
+
                 if m_geo:
-                    cep = m_geo.group(1) or ""
-                    cidade = m_geo.group(2).strip(" ,.-")
-                    uf = m_geo.group(3).strip()
-                    pais = m_geo.group(4).strip() if m_geo.group(4) else "Brasil"
+                    cep = m_geo.group(1) if len(m_geo.groups()) >= 4 and m_geo.group(1) and re.match(r'^\d{5}-?\d{3}$', m_geo.group(1)) else ""
+                    cidade_idx = 2 if len(m_geo.groups()) >= 4 and cep else 1
+                    uf_idx = 3 if len(m_geo.groups()) >= 4 and cep else 2
+                    pais_idx = 4 if len(m_geo.groups()) >= 4 and cep else 3
+                    cidade = m_geo.group(cidade_idx).strip(" ,.-") if m_geo.group(cidade_idx) else ""
+                    uf = m_geo.group(uf_idx).strip() if m_geo.group(uf_idx) else ""
+                    pais = m_geo.group(pais_idx).strip() if (len(m_geo.groups()) >= pais_idx and m_geo.group(pais_idx)) else "Brasil"
                     self.data['endereco_profissional'] = {
                         'texto': texto_limpo,
                         'cep': cep,
@@ -356,24 +471,14 @@ class LattesParser:
             self.data['endereco'] = None
             self.data['endereco_profissional'] = None
 
-    # Extrai o histórico de afiliações a partir de 'Atuação Profissional' e constrói o georreferenciamento.
-    def extract_historical_addresses(self):
+    # Extrai exclusivamente os locais de georreferenciamento (atuais e históricos).
+    def extract_georeferencing_locations(self):
         try:
-            enderecos_historicos = []
             locais_georref = []
             
-            # Adiciona o endereço atual como âncora nos locais de georreferenciamento
-            if self.data.get('endereco_profissional') and self.data['endereco_profissional'].get('municipio'):
-                end_p = self.data['endereco_profissional']
-                locais_georref.append({
-                    'tipo': 'atual',
-                    'instituicao': self.data.get('endereco', '').split(',')[0].strip(),
-                    'ano_inicio': None,
-                    'ano_fim': 'Atual',
-                    'municipio': end_p['municipio'],
-                    'estado': end_p['estado'],
-                    'pais': end_p['pais']
-                })
+            end_p = self.data.get('endereco_profissional') or {}
+            end_inst_texto = self.data.get('endereco', '').split(',')[0].strip() if self.data.get('endereco') else ''
+            norm_end_inst = self.normalizar_nome(end_inst_texto)
             
             ancora = self.soup.find('a', attrs={'name': 'AtuacaoProfissional'})
             if ancora:
@@ -386,7 +491,6 @@ class LattesParser:
                         curr = inst_div.find_next_sibling('div')
                         contexto = []
                         periodos = []
-                        vinculos = []
                         
                         while curr and 'inst_back' not in curr.get('class', []):
                             texto_curr = self.limpar_texto(curr.get_text(separator=' ', strip=True))
@@ -394,11 +498,20 @@ class LattesParser:
                                 contexto.append(texto_curr)
                                 for m in re.finditer(r'\b(\d{4})\s*-\s*(\d{4}|Atual)\b', texto_curr, re.IGNORECASE):
                                     periodos.append((int(m.group(1)), m.group(2).strip()))
-                                if "Vínculo:" in texto_curr or "Enquadramento Funcional:" in texto_curr or "Vinculo:" in texto_curr:
-                                    vinculos.append(texto_curr)
                             curr = curr.find_next_sibling('div')
                             
                         ctx_str = " ".join(contexto)
+                        
+                        # Descarta blocos fantasmas/residuais sem vínculo, sem enquadramento funcional e sem atividades
+                        texto_valido = re.sub(
+                            r"V[ií]nculo institucional|\d{4}\s*-\s*(?:\d{4}|Atual)|V[ií]nculo:\s*|Enquadramento Funcional:\s*|Carga hor[aá]ria:\s*|Regime:\s*|Outras informa[cç][oõ]es:?",
+                            "",
+                            ctx_str,
+                            flags=re.IGNORECASE
+                        ).strip(" ,.:;")
+                        if not texto_valido:
+                            continue
+
                         cidade, uf, pais = self.resolver_geo_instituicao(nome_inst, ctx_str)
                         
                         if periodos:
@@ -413,38 +526,72 @@ class LattesParser:
                         else:
                             ano_inicio = None
                             ano_fim = None
-                            
-                        periodo_str = f"{ano_inicio} - {ano_fim}" if ano_inicio else ""
                         
-                        item_historico = {
-                            'instituicao': nome_inst,
-                            'periodo': periodo_str,
-                            'ano_inicio': ano_inicio,
-                            'ano_fim': ano_fim,
-                            'vinculo': vinculos[0] if vinculos else "",
-                            'municipio': cidade or "",
-                            'estado': uf or "",
-                            'pais': pais or "Brasil"
-                        }
-                        enderecos_historicos.append(item_historico)
+                        tipo = 'atual' if ano_fim == 'Atual' else 'historico'
                         
+                        # Verifica se esta instituição corresponde ao endereço profissional atual do cabeçalho
+                        norm_inst = self.normalizar_nome(nome_inst)
+                        is_primary = False
+                        if tipo == 'atual':
+                            if norm_end_inst and (
+                                norm_end_inst in norm_inst or 
+                                norm_inst in norm_end_inst or 
+                                ("EMBRAPA" in norm_end_inst and "EMBRAPA" in norm_inst)
+                            ):
+                                is_primary = True
+                                if end_p.get('municipio'):
+                                    cidade = end_p['municipio']
+                                if end_p.get('estado'):
+                                    uf = end_p['estado']
+                                if end_p.get('pais'):
+                                    pais = end_p['pais']
+
                         locais_georref.append({
-                            'tipo': 'historico',
+                            'tipo': tipo,
                             'instituicao': nome_inst,
                             'ano_inicio': ano_inicio,
                             'ano_fim': ano_fim,
                             'municipio': cidade or "",
                             'estado': uf or "",
-                            'pais': pais or "Brasil"
+                            'pais': pais or "Brasil",
+                            '_is_primary': is_primary
                         })
             
-            self.data['enderecos_historicos'] = enderecos_historicos
-            self.data['locais_georreferenciamento'] = locais_georref
+            # Se não houver nenhuma instituição ativa detectada a partir da Atuação Profissional,
+            # recorre ao endereço profissional como fallback
+            tem_atual = any(l['tipo'] == 'atual' for l in locais_georref)
+            if not tem_atual and end_p and end_p.get('municipio'):
+                locais_georref.append({
+                    'tipo': 'atual',
+                    'instituicao': end_inst_texto,
+                    'ano_inicio': None,
+                    'ano_fim': 'Atual',
+                    'municipio': end_p['municipio'],
+                    'estado': end_p['estado'],
+                    'pais': end_p['pais'],
+                    '_is_primary': True
+                })
+            
+            # Ordenação: primário 'atual' no topo, outros 'atual', seguidos por 'historico' por ano decrescente
+            locais_ordenados = sorted(
+                locais_georref,
+                key=lambda x: (
+                    0 if x.get('_is_primary') else (1 if x['tipo'] == 'atual' else 2),
+                    -(x['ano_inicio'] or 0)
+                )
+            )
+            for item in locais_ordenados:
+                item.pop('_is_primary', None)
+                
+            self.data['locais_georreferenciamento'] = locais_ordenados
 
         except Exception as e:
-            print(f"Erro ao extrair endereços históricos: {e}")
-            self.data['enderecos_historicos'] = []
+            print(f"Erro ao extrair locais de georreferenciamento: {e}")
             self.data['locais_georreferenciamento'] = []
+
+    def extract_historical_addresses(self):
+        # Mantido como alias para retrocompatibilidade
+        return self.extract_georeferencing_locations()
 
     # Extrai áreas e subáreas de atuação.
     def extract_activity(self):
@@ -543,9 +690,23 @@ class LattesParser:
             if partes_resto:
                 titulo_artigo = partes_resto[0].strip()
         else:
-            norm = self.normalizar_nome(texto_limpo)
-            id_colab = lattes_links.get(norm, "")
-            colaboradores.append({"nome": texto_limpo, "id_lattes": id_colab})
+            m_semi = re.search(r';\s*([A-Z][a-z0-9].*?\.\s)', texto_limpo)
+            if m_semi:
+                bloco_autores = texto_limpo[:m_semi.start()].strip()
+                resto = texto_limpo[m_semi.start()+1:].strip()
+                for autor in bloco_autores.split(';'):
+                    nome_limpo = autor.strip()
+                    if nome_limpo:
+                        norm = self.normalizar_nome(nome_limpo)
+                        id_colab = lattes_links.get(norm, "")
+                        colaboradores.append({"nome": nome_limpo, "id_lattes": id_colab})
+                partes_resto = re.split(r'\.\s', resto, maxsplit=1)
+                if partes_resto:
+                    titulo_artigo = partes_resto[0].strip()
+            else:
+                norm = self.normalizar_nome(texto_limpo)
+                id_colab = lattes_links.get(norm, "")
+                colaboradores.append({"nome": texto_limpo, "id_lattes": id_colab})
 
         return colaboradores, titulo_artigo, ano, texto_limpo
 
@@ -638,10 +799,30 @@ class LattesParser:
                 if len(resto_partes) > 1:
                     detalhes = resto_partes[1].strip()
         else:
-            titulo = texto_limpo
-            norm = self.normalizar_nome(texto_limpo)
-            id_colab = lattes_links.get(norm, "")
-            colaboradores.append({"nome": texto_limpo, "id_lattes": id_colab})
+            m_semi = re.search(r';\s*([A-Z][a-z0-9].*?\.\s)', texto_limpo)
+            if m_semi:
+                bloco_autores = texto_limpo[:m_semi.start()].strip()
+                resto = texto_limpo[m_semi.start()+1:].strip()
+                for autor in bloco_autores.split(';'):
+                    nome_limpo = autor.strip()
+                    if nome_limpo:
+                        norm = self.normalizar_nome(nome_limpo)
+                        id_colab = lattes_links.get(norm, "")
+                        colaboradores.append({"nome": nome_limpo, "id_lattes": id_colab})
+                m_in = re.search(r'\.\s+In:\s+', resto, re.IGNORECASE)
+                if m_in:
+                    titulo = resto[:m_in.start()].strip()
+                    detalhes = resto[m_in.end():].strip()
+                else:
+                    resto_partes = re.split(r'\.\s+', resto, maxsplit=1)
+                    titulo = resto_partes[0].strip()
+                    if len(resto_partes) > 1:
+                        detalhes = resto_partes[1].strip()
+            else:
+                titulo = texto_limpo
+                norm = self.normalizar_nome(texto_limpo)
+                id_colab = lattes_links.get(norm, "")
+                colaboradores.append({"nome": texto_limpo, "id_lattes": id_colab})
             
         return {
             'titulo': titulo,
@@ -830,13 +1011,14 @@ class LattesParser:
         self.extract_name()
         self.extract_citation_names()
         self.extract_address()
-        self.extract_historical_addresses()
+        self.extract_georeferencing_locations()
         self.extract_activity()
         self.extract_articles()
         self.extract_productions()
         self.extract_orientations()
         self.extract_projects()
         self.extract_research_lines()
+        self.enrich_citation_names()
         print("Análise concluída.")
         return self.data
 
@@ -931,3 +1113,26 @@ if __name__ == "__main__":
             print(f"Erro: Arquivo '{html_file_path}' não encontrado.")
         except Exception as e:
             print(f"Um erro inesperado ocorreu em {id_lattes}: {e}")
+
+    # Execução automática do preenchimento de IDs Lattes dos coautores da rede
+    print("\n" + "=" * 70)
+    print("Executando preenchimento automático de IDs Lattes dos coautores da rede...")
+    try:
+        from pathlib import Path
+        from filling_idlattes import build_name_index, fill_missing_ids
+
+        json_files = sorted(Path(pasta_saida).glob("*.json"))
+        name_index = build_name_index(json_files)
+        log_path = Path("filled_idlattes_log.csv")
+        summary = fill_missing_ids(json_files, name_index, log_path)
+
+        total_preenchidos = summary["filled_owner"] + summary["filled_coauthors"] + summary["filled_orientations"]
+        print(f"Preenchimento concluído com sucesso:")
+        print(f"  - Total de IDs preenchidos: {total_preenchidos}")
+        print(f"  - Próprio pesquisador na publicação: {summary['filled_owner']}")
+        print(f"  - Coautores identificados na rede: {summary['filled_coauthors']}")
+        print(f"  - Alunos/orientandos na rede: {summary['filled_orientations']}")
+        print(f"Log detalhado salvo em: {log_path}")
+    except Exception as e:
+        print(f"Aviso ao executar preenchimento de IDs: {e}")
+    print("=" * 70 + "\n")

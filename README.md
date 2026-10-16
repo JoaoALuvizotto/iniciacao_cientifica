@@ -51,29 +51,32 @@ O pipeline transforma arquivos HTML brutos exportados do Lattes em documentos JS
 - **Demais Produções**:
   - Estruturação equivalente para `resumos_expandidos`, `resumos_publicados` e `producao_revistas` (artigos em jornais e revistas de divulgação).
 
-### 3. Reconstituição de Afiliações e Endereços Históricos (`enderecos_historicos`)
-- **Correção da Seção Alvo**: O histórico institucional passou a ser capturado a partir dos blocos `<div class="inst_back">` sob a âncora `AtuacaoProfissional`.
-- **Dados Coletados**: Nome da instituição, período de atuação, anos individuais (`ano_inicio`, `ano_fim`), especificação do `vinculo` funcional e dedução geográfica de município e UF.
-
-### 4. Objeto `locais_georreferenciamento` para Consultas Espaciais
-- **Padronização Espacial**: Objeto unificado contendo o endereço institucional atual e o histórico cronológico de atuação do pesquisador:
+### 3. Objeto `locais_georreferenciamento` para Consultas Espaciais e Históricas
+- **Unificação Espacial**: Substitui e unifica o antigo array `enderecos_historicos` em uma estrutura única, limpa e padronizada voltada a consultas espaciais, SIG e grafos temporais:
   ```json
   {
       "tipo": "atual" | "historico",
-      "instituicao": "Universidade Estadual de Campinas, UNICAMP, Brasil.",
-      "ano_inicio": 2023,
+      "instituicao": "Universidade Federal de São Carlos, UFSCAR, Brasil.",
+      "ano_inicio": 2011,
       "ano_fim": "Atual",
-      "municipio": "Campinas",
+      "municipio": "Sorocaba",
       "estado": "SP",
       "pais": "Brasil"
   }
   ```
+- **Resolução de `ano_inicio` das Afiliações Atuais**: As instituições ativas (`ano_fim == 'Atual'`) têm seus anos de início (`ano_inicio`) extraídos diretamente dos períodos de atuação da seção `AtuacaoProfissional`, eliminando valores nulos.
 - **Catálogo Institucional Inteligente (`INSTITUICOES_GEO`)**: Mapeamento interno de mais de 70 universidades e centros de pesquisa (UFSCAR, UNICAMP, USP, UNESP, EMBRAPA, ITAL, CNPEM, etc.) com detecção de campus específico (ex.: "Campus Sorocaba") e instituições internacionais (Alemanha, Itália, Portugal, Reino Unido, EUA, Japão).
 
+### 4. Enriquecimento de Citações Bibliográficas via Pipeline em Camadas (`listaNomesCitacao`)
+- **Pipeline em 3 Camadas (`enrich_citation_names()`)**:
+  1. **Camada 1 (Nativo)**: Preserva e limpa as variações cadastradas oficialmente no Lattes pelo próprio pesquisador.
+  2. **Camada 2 (Empírico)**: Minera as publicações do próprio autor (`listaPB`, `trabalhos_completos`, etc.), identificando as assinaturas reais e empíricas utilizadas nos periódicos através do classificador `eh_mesmo_autor()` (sem geração sintética ou artificial de citações).
+  3. **Camada 3 (Higienização)**: Deduplica variações por chave normalizada, eliminando falsos positivos e ruídos.
+- **Resultado**: Resolução fidedigna das citações a partir do Lattes e produções reais, sem invenção de nomes sintéticos de citação.
+
 ### 5. Resolução Determinística de Entidades (`filling_idlattes.py`)
-- **Separação de Responsabilidades**: O `parser.py` é responsável pela extração fiel do HTML; o `filling_idlattes.py` executa a reconciliação e preenchimento dos IDs Lattes faltantes.
+- **Separação de Responsabilidades**: O `parser.py` é responsável pela extração fiel do HTML; o `filling_idlattes.py` executa a reconciliação e preenchimento dos IDs Lattes faltantes com base no nome completo e na `listaNomesCitacao`.
 - **Normalização Unicode NFKD**: Comparação textual resiliente a diacríticos, pontuações e maiúsculas/minúsculas.
-- **Variações Sintéticas de Citação**: Geração algorítmica de padrões ABNT (ex.: `SILVA, J. S.`, `SILVA, JOAO S.`) para pesquisadores que não preencheram o campo `listaNomesCitacao` no Lattes.
 - **Auditoria Completa**: Geração de `filled_idlattes_log.csv` classificando cada resolução em:
   - `proprio_pesquisador`: identificação do autor do currículo em sua própria publicação.
   - `coautor_reconhecido`: identificação de outro pesquisador monitorado na rede.
@@ -108,11 +111,12 @@ Estatísticas consolidadas obtidas via `validar_tudo.py` sobre os 54 currículos
 | Categoria | Total / Métrica | Taxa de Conformidade |
 | :--- | :--- | :--- |
 | **Projetos de Pesquisa** | 1.132 projetos catalogados | **82,7%** com descrição/resumo preenchido (936 projetos)<br>**100%** com `ano_inicio` e `ano_fim` separados |
-| **Artigos em Periódicos (`listaPB`)** | 5.849 artigos | **100%** com campo `ano` estruturado<br>**41,9%** dos autores com `id_lattes` resolvido (14.513) |
-| **Trabalhos em Congressos (`trabalhos_completos`)** | 3.050 trabalhos | **100%** estruturados como dicionários<br>**100%** com campo `ano` estruturado<br>**63,4%** dos autores com `id_lattes` resolvido (8.146) |
+| **Artigos em Periódicos (`listaPB`)** | 5.849 artigos | **100%** com campo `ano` estruturado<br>**42,0%** dos autores com `id_lattes` resolvido (14.525) |
+| **Trabalhos em Congressos (`trabalhos_completos`)** | 3.050 trabalhos | **100%** estruturados como dicionários<br>**100%** com campo `ano` estruturado<br>**63,2%** dos autores com `id_lattes` resolvido (8.130) |
+| **Produção em Revistas e Jornais** | 263 produções | **75,0%** dos autores com `id_lattes` resolvido (357 de 476) |
+| **Resoluções de ID (`filled_idlattes_log.csv`)** | 15.921 IDs preenchidos | **14.096** autor próprio · **1.807** coautores · **18** orientandos |
 | **Afiliações e Endereços Históricos** | 54 de 54 pesquisadores com histórico | **100%** de cobertura (417 vínculos históricos no total)<br>**58,3%** com município e UF resolvidos |
-| **Locais de Georreferenciamento** | 54 pesquisadores | **471 pontos geográficos** (endereço atual + histórico) |
-| **Resoluções de ID (`filled_idlattes_log.csv`)** | 15.525 IDs preenchidos | **13.749** autor próprio · **1.776** coautores · **0 ambíguos** |
+| **Locais de Georreferenciamento** | 54 pesquisadores | **417 pontos geográficos** (150 afiliações atuais com 100% de `ano_inicio`) |
 
 ---
 
@@ -137,23 +141,11 @@ Os documentos salvos em `curriculos_json/<Nome Completo>.json` seguem a seguinte
         "estado": "SP",
         "pais": "Brasil"
     },
-    "enderecos_historicos": [
-        {
-            "instituicao": "Universidade Estadual de Campinas, UNICAMP, Brasil.",
-            "periodo": "2023 - Atual",
-            "ano_inicio": 2023,
-            "ano_fim": "Atual",
-            "vinculo": "Vínculo: Professor Convidado...",
-            "municipio": "Campinas",
-            "estado": "SP",
-            "pais": "Brasil"
-        }
-    ],
     "locais_georreferenciamento": [
         {
             "tipo": "atual",
-            "instituicao": "Universidade Federal de São Carlos",
-            "ano_inicio": null,
+            "instituicao": "Universidade Federal de São Carlos, UFSCAR, Brasil.",
+            "ano_inicio": 2011,
             "ano_fim": "Atual",
             "municipio": "Sorocaba",
             "estado": "SP",
@@ -162,8 +154,8 @@ Os documentos salvos em `curriculos_json/<Nome Completo>.json` seguem a seguinte
         {
             "tipo": "historico",
             "instituicao": "Universidade Estadual de Campinas, UNICAMP, Brasil.",
-            "ano_inicio": 2023,
-            "ano_fim": "Atual",
+            "ano_inicio": 1999,
+            "ano_fim": 2003,
             "municipio": "Campinas",
             "estado": "SP",
             "pais": "Brasil"
@@ -260,14 +252,14 @@ python -m spacy download pt_core_news_sm
 
 Execute os passos sequencialmente a partir do diretório `Parser/`:
 
-### Passo 1: Extração e Parsing dos HTMLs Brutos
-Lê os arquivos em `curriculos/` e gera os JSONs estruturados em `curriculos_json/`:
+### Passo 1: Extração, Parsing e Preenchimento Automático
+Lê os arquivos HTML em `curriculos/`, extrai todos os campos estruturados em `curriculos_json/` e já executa automaticamente a resolução e vinculação dos IDs Lattes dos coautores da rede ao final:
 ```bash
 python parser.py
 ```
 
-### Passo 2: Resolução de Entidades e Preenchimento de IDs
-Reconcilia nomes e variações de citação, preenche os `id_lattes` e gera o relatório CSV de auditoria:
+### Passo 2: Execução Avulsa de Preenchimento de IDs (Opcional)
+Caso queira rodar apenas a reconciliação de nomes e atualização de IDs Lattes sem precisar reprocessar os HTMLs:
 ```bash
 python filling_idlattes.py --folder curriculos_json --log filled_idlattes_log.csv
 ```
